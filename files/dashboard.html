@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Predictive Maintenance Dashboard</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+  :root{
+    --bg:#f4f6f8; --card-bg:#ffffff; --text:#1a1d21; --text-sub:#5b6470;
+    --border:#e2e6ea; --accent:#2563eb; --green:#16a34a; --green-bg:#dcfce7;
+    --red:#dc2626; --red-bg:#fee2e2; --yellow:#ca8a04; --yellow-bg:#fef9c3;
+    --orange:#ea580c; --orange-bg:#ffedd5;
+    --gray:#6b7280; --gray-bg:#f1f2f4; --bar-bg:#eef0f2; --shadow:0 1px 3px rgba(0,0,0,0.08);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans Thai",sans-serif;}
+  .wrap{max-width:1100px;margin:0 auto;padding:20px 16px 60px;}
+  header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;}
+  h1{font-size:1.4rem;margin:0;display:flex;align-items:center;gap:8px;}
+  .pm-tag{background:#ede9fe;color:#7c3aed;font-size:0.72rem;font-weight:700;padding:3px 9px;border-radius:6px;}
+  .sub{color:var(--text-sub);font-size:0.82rem;margin-top:2px;}
+  .live-dot{width:9px;height:9px;border-radius:50%;background:var(--gray);display:inline-block;}
+  .live-dot.on{background:var(--green);animation:pulse 1.4s infinite;}
+  .live-dot.err{background:var(--red);}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5);}70%{box-shadow:0 0 0 7px rgba(22,163,74,0);}100%{box-shadow:0 0 0 0 rgba(22,163,74,0);}}
+
+  .connbar{background:var(--card-bg);border:1px solid var(--border);border-radius:12px;
+    padding:14px 16px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .connbar input{flex:1;min-width:180px;padding:9px 10px;border-radius:8px;border:1px solid var(--border);font-size:0.88rem;}
+  .connbar button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-size:0.85rem;cursor:pointer;font-weight:600;}
+  .connbar .label{font-size:0.78rem;color:var(--text-sub);}
+  .connbar button.notif-on{background:var(--green)!important;color:#fff!important;}
+
+  .alertbar{display:none;background:var(--orange-bg);border:1px solid var(--orange);color:var(--orange);
+    border-radius:12px;padding:12px 16px;margin-bottom:16px;font-size:0.88rem;font-weight:600;}
+  .alertbar.show{display:block;}
+
+  .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:18px;}
+  .summary .box{background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:12px;text-align:center;box-shadow:var(--shadow);}
+  .summary .box .num{font-size:1.5rem;font-weight:700;}
+  .summary .box .label{font-size:0.75rem;color:var(--text-sub);}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
+  .card{background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow);
+    border-left:4px solid var(--border);}
+  .card.risk-low{border-left-color:var(--green);}
+  .card.risk-medium{border-left-color:var(--yellow);}
+  .card.risk-high{border-left-color:var(--orange);}
+  .card.risk-failed{border-left-color:var(--red);}
+  .card.risk-maintenance{border-left-color:var(--accent);}
+  .card .top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
+  .card h3{margin:0 0 2px;font-size:1.02rem;}
+  .card .loc{color:var(--text-sub);font-size:0.8rem;}
+  .badge{font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap;}
+  .badge.running{background:var(--green-bg);color:var(--green);}
+  .badge.stopped{background:var(--gray-bg);color:var(--gray);}
+  .badge.maintenance{background:var(--yellow-bg);color:var(--yellow);}
+  .badge.error{background:var(--red-bg);color:var(--red);}
+
+  .health-wrap{margin-top:14px;}
+  .health-label{display:flex;justify-content:space-between;font-size:0.78rem;color:var(--text-sub);margin-bottom:4px;}
+  .health-score{font-weight:700;font-size:0.95rem;}
+  .health-bar{height:8px;background:var(--bar-bg);border-radius:999px;overflow:hidden;}
+  .health-fill{height:100%;border-radius:999px;transition:width .6s ease, background .3s ease;}
+
+  .metric-row{font-size:0.75rem;color:var(--text-sub);margin-top:10px;}
+  .metric-row .mlabel{display:flex;justify-content:space-between;margin-bottom:3px;}
+  .metric-row .mval{color:var(--text);font-weight:600;}
+  .bar{height:6px;background:var(--bar-bg);border-radius:999px;overflow:hidden;}
+  .bar-fill{height:100%;border-radius:999px;transition:width .6s ease;}
+
+  .predict-box{margin-top:12px;padding:10px 12px;border-radius:10px;font-size:0.78rem;line-height:1.5;}
+  .predict-box.low{background:var(--green-bg);color:#14532d;}
+  .predict-box.medium{background:var(--yellow-bg);color:#713f12;}
+  .predict-box.high{background:var(--orange-bg);color:#7c2d12;}
+  .predict-box.failed{background:var(--red-bg);color:#7f1d1d;}
+  .predict-box.maintenance{background:#dbeafe;color:#1e3a8a;}
+  .predict-box .action{font-weight:700;margin-top:4px;}
+
+  .meta{margin-top:10px;font-size:0.74rem;color:var(--text-sub);}
+  .tach-info{margin-top:6px;font-size:0.72rem;color:var(--text-sub);}
+  .note-box{margin-top:10px;padding:8px 10px;border-radius:8px;background:var(--orange-bg);color:#7c2d12;font-size:0.76rem;line-height:1.5;}
+
+  .confirm-btn{
+    margin-top:12px;width:100%;background:var(--green);color:#fff;border:none;
+    padding:11px;border-radius:10px;font-size:0.9rem;font-weight:700;cursor:pointer;
+  }
+  .confirm-btn:hover{opacity:0.9;}
+
+  .btn-row{margin-top:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
+  .status-btn{
+    border:1px solid var(--border);background:var(--card-bg);color:var(--text-sub);
+    padding:8px 4px;border-radius:8px;font-size:0.72rem;cursor:pointer;text-align:center;
+    line-height:1.3;
+  }
+  .status-btn:hover{border-color:var(--accent);color:var(--accent);}
+  .status-btn.active{
+    background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700;cursor:default;
+  }
+  .status-btn.active:hover{color:#fff;}
+
+  .reset-btn{
+    margin-top:8px;width:100%;background:transparent;border:1px dashed var(--border);
+    color:var(--text-sub);padding:8px;border-radius:8px;font-size:0.76rem;cursor:pointer;
+  }
+  .reset-btn:hover{border-color:var(--red);color:var(--red);}
+
+  .topicbox{background:#0f172a;color:#c4b5fd;font-family:Consolas,monospace;font-size:0.74rem;border-radius:10px;padding:12px 16px;margin-bottom:16px;}
+  .topicbox .line{white-space:pre;}
+  .empty{text-align:center;padding:60px 20px;color:var(--text-sub);}
+  footer{margin-top:30px;text-align:center;font-size:0.73rem;color:var(--text-sub);}
+
+  /* ---- Toast popup แจ้งเตือนในหน้าเว็บ ---- */
+  #toastContainer{
+    position:fixed;top:16px;right:16px;z-index:999;
+    display:flex;flex-direction:column;gap:10px;
+    max-width:min(360px, calc(100vw - 32px));
+  }
+  .toast{
+    background:var(--card-bg);border:1px solid var(--border);border-left:5px solid var(--accent);
+    border-radius:12px;padding:14px 16px;box-shadow:0 8px 24px rgba(0,0,0,0.15);
+    animation:toast-in .25s ease-out;
+    position:relative;
+  }
+  .toast.high{border-left-color:var(--orange);}
+  .toast.failed{border-left-color:var(--red);}
+  .toast.maintenance{border-left-color:var(--accent);}
+  .toast .ttitle{font-weight:700;font-size:0.9rem;margin-bottom:4px;padding-right:20px;}
+  .toast .tbody{font-size:0.8rem;color:var(--text-sub);line-height:1.4;}
+  .toast .tclose{
+    position:absolute;top:10px;right:10px;background:none;border:none;
+    color:var(--text-sub);cursor:pointer;font-size:1rem;line-height:1;padding:0;
+  }
+  .toast.leaving{animation:toast-out .2s ease-in forwards;}
+  @keyframes toast-in{from{opacity:0;transform:translateX(30px);}to{opacity:1;transform:translateX(0);}}
+  @keyframes toast-out{from{opacity:1;transform:translateX(0);}to{opacity:0;transform:translateX(30px);}}
+</style>
+</head>
+<body>
+<div id="toastContainer"></div>
+<div class="wrap">
+  <header>
+    <div>
+      <h1><span class="live-dot" id="liveDot"></span> Predictive Maintenance <span class="pm-tag">MQTT + AI วิเคราะห์แนวโน้ม</span></h1>
+      <div class="sub" id="statusText">ยังไม่ได้เชื่อมต่อ</div>
+    </div>
+  </header>
+
+  <div class="connbar">
+    <span class="label">Topic prefix:</span>
+    <input id="prefixInput" value="mydemo123" placeholder="เช่น mydemo123">
+    <button id="connectBtn">เชื่อมต่อ</button>
+    <button id="notifBtn" style="background:var(--gray-bg);color:var(--text-sub);">🔔 เปิดการแจ้งเตือน</button>
+  </div>
+
+  <div class="topicbox" id="topicInfo"></div>
+  <div class="alertbar" id="alertBar"></div>
+  <div class="summary" id="summaryBoxes"></div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="emptyState">ยังไม่มีข้อมูล — กด "เชื่อมต่อ" เพื่อเริ่มรับข้อมูล</div>
+
+  <footer>
+    ต้องรัน <b>simulator.js</b> และ <b>predictor.js</b> ด้วย topic prefix เดียวกันนี้อยู่ก่อน<br>
+    เมื่อ AI ตรวจพบความเสี่ยงสูง จะสั่งหยุดเครื่องเพื่อซ่อมบำรุง<b>อัตโนมัติ</b> พร้อมป็อปอัปแจ้งเตือนมุมขวาบน — พอซ่อมเสร็จให้กดปุ่ม "✅ ซ่อมเสร็จแล้ว" เพื่อยืนยันกลับมาทำงานเอง
+  </footer>
+</div>
+
+<script>
+const STATUS_META = {
+  running:      { label:"ทำงานปกติ", short:"ทำงานปกติ", cls:"running" },
+  stopped:      { label:"หยุดทำงาน", short:"หยุดทำงาน", cls:"stopped" },
+  maintenance:  { label:"ซ่อมบำรุง", short:"ซ่อมบำรุง", cls:"maintenance" },
+  error:        { label:"ขัดข้อง", short:"ขัดข้อง", cls:"error" },
+};
+const RISK_META = {
+  low:    { label: "ความเสี่ยงต่ำ" },
+  medium: { label: "เฝ้าระวัง" },
+  high:   { label: "เสี่ยงสูง" },
+  failed: { label: "พังแล้ว" },
+  maintenance: { label: "กำลังซ่อมบำรุง" },
+};
+
+let mqttClient = null;
+let currentPrefix = "";
+let latestMachines = {};
+let latestPredictions = {};
+let notifEnabled = false;
+let prevRisk = {}; // { machineId: risk } เก็บไว้เทียบว่าเปลี่ยนระดับความเสี่ยงหรือยัง
+
+// ---------- เสียงเตือน (สร้างด้วย Web Audio API ไม่ต้องใช้ไฟล์เสียงภายนอก) ----------
+function playBeep(times = 2){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    for(let i = 0; i < times; i++){
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.value = 0.15;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const start = ctx.currentTime + i * 0.35;
+      osc.start(start);
+      osc.stop(start + 0.2);
+    }
+  }catch(e){ console.warn('เล่นเสียงไม่ได้:', e); }
+}
+
+function notify(title, body){
+  if(!notifEnabled) return;
+  playBeep();
+  if('Notification' in window && Notification.permission === 'granted'){
+    new Notification(title, { body, icon: '' });
+  }
+}
+
+// ---------- Toast popup ในหน้าเว็บ (แสดงเสมอ ไม่ต้องขอสิทธิ์อะไร) ----------
+function showToast(kind, title, body, machineId){
+  const container = document.getElementById('toastContainer');
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  if(machineId) el.dataset.machineId = machineId;
+  el.innerHTML = `
+    <button class="tclose" aria-label="ปิด">✕</button>
+    <div class="ttitle">${escapeHtml(title)}</div>
+    <div class="tbody">${escapeHtml(body)}</div>
+  `;
+  el.querySelector('.tclose').addEventListener('click', () => removeToast(el));
+  container.prepend(el);
+
+  // จำกัดไม่ให้ toast กองสูงเกินไป
+  const all = container.querySelectorAll('.toast');
+  if(all.length > 5) removeToast(all[all.length - 1]);
+}
+function removeToast(el){
+  if(!el || !el.parentNode) return;
+  el.classList.add('leaving');
+  setTimeout(() => el.remove(), 200);
+}
+// ปิด toast ที่เกี่ยวกับเครื่องจักรนี้ทั้งหมด เรียกตอนกดยืนยัน/เปลี่ยนสถานะ/รีเซ็ต
+function dismissToastsFor(machineId){
+  document.querySelectorAll(`.toast[data-machine-id="${machineId}"]`).forEach(removeToast);
+}
+
+document.getElementById('notifBtn').addEventListener('click', async () => {
+  if(!('Notification' in window)){
+    alert('เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน');
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if(perm === 'granted'){
+    notifEnabled = true;
+    const btn = document.getElementById('notifBtn');
+    btn.textContent = '🔔 เปิดแจ้งเตือนแล้ว';
+    btn.classList.add('notif-on');
+    playBeep(1); // เสียงทดสอบให้รู้ว่าเปิดสำเร็จ
+    new Notification('เปิดการแจ้งเตือนแล้ว', { body: 'จะแจ้งเตือนทันทีเมื่อพบความเสี่ยงสูงหรือเครื่องพัง' });
+  } else {
+    alert('ต้องอนุญาตการแจ้งเตือนในเบราว์เซอร์ก่อนถึงจะใช้งานได้');
+  }
+});
+
+function escapeHtml(str){ const d=document.createElement('div'); d.textContent = str ?? ''; return d.innerHTML; }
+function tempColor(t){ if(t>=80) return 'var(--red)'; if(t>=60) return 'var(--yellow)'; return 'var(--green)'; }
+function healthColor(h){ if(h<40) return 'var(--orange)'; if(h<70) return 'var(--yellow)'; return 'var(--green)'; }
+function setLive(state){
+  document.getElementById('liveDot').className = 'live-dot' + (state==='on'?' on':state==='err'?' err':'');
+}
+
+document.getElementById('connectBtn').addEventListener('click', connect);
+
+function connect(){
+  if(mqttClient){ mqttClient.end(true); }
+  currentPrefix = document.getElementById('prefixInput').value.trim() || 'mydemo123';
+  const statusTopic = `${currentPrefix}/status`;
+  const predictTopic = `${currentPrefix}/predict`;
+  const commandTopic = `${currentPrefix}/command`;
+
+  document.getElementById('topicInfo').innerHTML =
+    `<div class="line">SUBSCRIBE  ${statusTopic}    (ข้อมูลเซนเซอร์จากเครื่องจักร)</div>` +
+    `<div class="line">SUBSCRIBE  ${predictTopic}   (ผลวิเคราะห์จาก AI)</div>` +
+    `<div class="line">PUBLISH    ${commandTopic}   (ส่งคำสั่งไปเครื่องจักร)</div>`;
+
+  document.getElementById('statusText').textContent = 'กำลังเชื่อมต่อ broker...';
+  setLive('off');
+
+  mqttClient = mqtt.connect('ws://broker.hivemq.com:8000/mqtt', {
+    clientId: 'pm-dashboard-' + Math.random().toString(16).slice(2),
+  });
+
+  mqttClient.on('connect', () => {
+    document.getElementById('statusText').textContent = `เชื่อมต่อสำเร็จ · กำลังฟังข้อมูลสด`;
+    setLive('on');
+    mqttClient.subscribe(statusTopic);
+    mqttClient.subscribe(predictTopic);
+  });
+
+  mqttClient.on('message', (topic, payload) => {
+    try{
+      const data = JSON.parse(payload.toString());
+      if(topic === statusTopic){
+        latestMachines = {};
+        data.forEach(m => latestMachines[m.id] = m);
+      } else if(topic === predictTopic){
+        latestPredictions = {};
+        data.forEach(p => latestPredictions[p.id] = p);
+        checkAlerts(data);
+      }
+      renderAll();
+    }catch(e){ console.error('parse error', e); }
+  });
+
+  mqttClient.on('error', (err) => {
+    document.getElementById('statusText').textContent = 'เชื่อมต่อผิดพลาด: ' + err.message;
+    setLive('err');
+  });
+  mqttClient.on('close', () => setLive('off'));
+}
+
+// เทียบระดับความเสี่ยงล่าสุดกับรอบก่อนหน้า แจ้งเตือนเฉพาะตอน "เปลี่ยน" ระดับ ไม่แจ้งซ้ำทุกวินาที
+function checkAlerts(predictions){
+  predictions.forEach(p => {
+    const prev = prevRisk[p.id];
+    if(prev !== p.risk){
+      if(p.risk === 'high'){
+        showToast('high', `⚠️ ${p.name}: ความเสี่ยงสูง`, p.message + ' — ' + p.action, p.id);
+        notify(`⚠️ ${p.name}: ความเสี่ยงสูง`, p.message + ' — ' + p.action);
+      } else if(p.risk === 'failed'){
+        showToast('failed', `🛑 ${p.name}: เครื่องพังแล้ว!`, p.message + ' — ' + p.action, p.id);
+        notify(`🛑 ${p.name}: เครื่องพังแล้ว!`, p.message + ' — ' + p.action);
+      } else if(p.risk === 'maintenance' && prev === 'high'){
+        showToast('maintenance', `🤖 ${p.name}: AI สั่งซ่อมบำรุงอัตโนมัติแล้ว`, 'รอทีมยืนยันเมื่อซ่อมเสร็จ', p.id);
+        notify(`🤖 ${p.name}: AI สั่งหยุดซ่อมบำรุงอัตโนมัติแล้ว`, 'รอทีมยืนยันเมื่อซ่อมเสร็จ');
+      }
+      prevRisk[p.id] = p.risk;
+    }
+  });
+}
+
+function sendCommand(id, status){
+  if(!mqttClient || !mqttClient.connected) return;
+  mqttClient.publish(`${currentPrefix}/command`, JSON.stringify({ id, status }));
+  dismissToastsFor(id);
+}
+function sendReset(id){
+  if(!mqttClient || !mqttClient.connected) return;
+  if(!confirm('รีเซ็ตค่าเครื่องจักรนี้กลับสู่ค่าเริ่มต้นหรือไม่?')) return;
+  mqttClient.publish(`${currentPrefix}/command`, JSON.stringify({ id, action: 'reset' }));
+  dismissToastsFor(id);
+}
+
+function renderAll(){
+  const ids = Object.keys(latestMachines);
+  document.getElementById('emptyState').style.display = ids.length ? 'none' : 'block';
+  if(!ids.length) return;
+
+  const urgent = ids.map(id => latestPredictions[id]).filter(p => p && (p.risk === 'high' || p.risk === 'failed'));
+  const alertBar = document.getElementById('alertBar');
+  if(urgent.length){
+    alertBar.className = 'alertbar show';
+    alertBar.textContent = `🚨 ต้องดำเนินการด่วน: ${urgent.map(p => p.name).join(', ')}`;
+  } else {
+    alertBar.className = 'alertbar';
+  }
+
+  const counts = {running:0, stopped:0, maintenance:0, error:0};
+  ids.forEach(id => counts[latestMachines[id].status] = (counts[latestMachines[id].status]||0)+1);
+  document.getElementById('summaryBoxes').innerHTML = `
+    <div class="box"><div class="num">${ids.length}</div><div class="label">ทั้งหมด</div></div>
+    <div class="box"><div class="num" style="color:var(--green)">${counts.running}</div><div class="label">ทำงานปกติ</div></div>
+    <div class="box"><div class="num" style="color:var(--accent)">${counts.maintenance}</div><div class="label">กำลังซ่อมบำรุง</div></div>
+    <div class="box"><div class="num" style="color:var(--orange)">${urgent.length}</div><div class="label">ต้องดูแลด่วน</div></div>
+    <div class="box"><div class="num" style="color:var(--red)">${counts.error}</div><div class="label">พังแล้ว</div></div>
+  `;
+
+  document.getElementById('grid').innerHTML = ids.map(id => {
+    const m = latestMachines[id];
+    const p = latestPredictions[id];
+    const meta = STATUS_META[m.status] || STATUS_META.stopped;
+    const risk = p ? p.risk : 'low';
+    const riskCls = ['low','medium','high','failed','maintenance'].includes(risk) ? risk : 'low';
+    const health = p ? p.healthScore : 100;
+
+    // ปุ่มยืนยันซ่อมเสร็จ โชว์เด่นเฉพาะตอนอยู่ในโหมดซ่อมบำรุง
+    const confirmDoneBtn = m.status === 'maintenance'
+      ? `<button class="confirm-btn" onclick="sendCommand('${m.id}','running')">✅ ซ่อมเสร็จแล้ว — กลับมาทำงาน</button>`
+      : '';
+
+    // ปุ่มสถานะทั้ง 4 (ปุ่มที่ตรงกับสถานะปัจจุบันจะไฮไลต์และกดไม่ได้)
+    const statusButtons = Object.entries(STATUS_META).map(([key, v]) => {
+      const isActive = key === m.status;
+      return `<button class="status-btn ${isActive ? 'active' : ''}"
+                ${isActive ? 'disabled' : `onclick="sendCommand('${m.id}','${key}')"`}>${v.short}</button>`;
+    }).join('');
+
+    return `
+    <div class="card risk-${riskCls}">
+      <div class="top">
+        <div><h3>${escapeHtml(m.name)}</h3><div class="loc">${escapeHtml(m.loc || '—')}</div></div>
+        <span class="badge ${meta.cls}">${meta.label}</span>
+      </div>
+
+      <div class="health-wrap">
+        <div class="health-label"><span>สุขภาพเครื่องจักร</span><span class="health-score" style="color:${healthColor(health)}">${health}/100</span></div>
+        <div class="health-bar"><div class="health-fill" style="width:${health}%;background:${healthColor(health)}"></div></div>
+      </div>
+
+      ${typeof m.rpm === 'number' ? `
+      <div class="metric-row">
+        <div class="mlabel"><span>🌀 ความเร็วพัดลม</span><span class="mval">${m.rpm} RPM</span></div>
+        ${typeof m.speed === 'number' ? `<div class="bar"><div class="bar-fill" style="width:${Math.min(100, m.speed)}%;background:${healthColor(health)}"></div></div>` : ''}
+        ${typeof m.edges === 'number' ? `<div class="tach-info">ขา tach GPIO${m.tachPin}: นับพัลส์ได้ ${m.pulses ?? 0}, เห็นขอบสัญญาณ ${m.edges}, ระดับตอนนี้ ${m.tachLevel}</div>` : ''}
+      </div>` : ''}
+      ${m.note ? `<div class="note-box">${escapeHtml(m.note)}</div>` : ''}
+      ${typeof m.temp === 'number' ? `
+      <div class="metric-row">
+        <div class="mlabel"><span>🌡 อุณหภูมิ</span><span class="mval">${m.temp.toFixed(0)} °C</span></div>
+        <div class="bar"><div class="bar-fill" style="width:${Math.min(100,m.temp)}%;background:${tempColor(m.temp)}"></div></div>
+      </div>` : ''}
+      ${typeof m.vibration === 'number' ? `
+      <div class="metric-row">
+        <div class="mlabel"><span>📳 การสั่นสะเทือน</span><span class="mval">${m.vibration.toFixed(2)} mm/s</span></div>
+        <div class="bar"><div class="bar-fill" style="width:${Math.min(100, m.vibration/6*100)}%;background:${healthColor(health)}"></div></div>
+      </div>` : ''}
+
+      ${p ? `
+      <div class="predict-box ${riskCls}">
+        🧠 ${escapeHtml(p.message)}
+        <div class="action">→ ${escapeHtml(p.action)}</div>
+      </div>` : ''}
+
+      <div class="meta">อัปเดต: ${new Date(m.updatedAt).toLocaleTimeString('th-TH')}</div>
+
+      ${confirmDoneBtn}
+
+      <div class="btn-row">${statusButtons}</div>
+      <button class="reset-btn" onclick="sendReset('${m.id}')">🔄 รีเซ็ตค่าเครื่องจักร</button>
+    </div>`;
+  }).join('');
+}
+</script>
+</body>
+</html>

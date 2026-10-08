@@ -1,0 +1,5 @@
+# Installed Node.js packages can be restored with npm install.
+files/node_modules/
+
+# GitHub rejects individual files over 100 MB. Store raw videos externally or via Git LFS.
+files/vdo/
